@@ -8,7 +8,7 @@ import "./IterableMapping.sol";
 import "./Ownable.sol";
 
 
-contract SkpVault is ERC20, Ownable {
+contract SkpLocker is ERC20, Ownable {
 
     using SafeMath for uint256;
 
@@ -17,9 +17,6 @@ contract SkpVault is ERC20, Ownable {
     // BSC SHIB
     address public SHIB = 0x2859e4544C4bB03966803b044A93563Bd2D0DD4D;
 
-    // MUMBAI SHIB
-    // address public  SHIB = 0xcB1e72786A6eb3b44C2a2429e317c8a2462CFeb1;
-
     // only more than 1000 shib
     // than pull into distribute address
     uint ShiBDistributeAmount = 1 * (10 ** 17);
@@ -27,21 +24,9 @@ contract SkpVault is ERC20, Ownable {
 
     SHIBDividendTracker public dividendTracker;
 
-    bool public canRedeem;
-
-    // last redeem date
-    mapping (address => uint256) public nextRedeemDate;
-
     mapping (address => uint256) public initSKPBalance;
 
     // how many times did address withraw
-    // total need 12 times; 
-    mapping (address => uint256) public redeemTimes;
-
-    uint ALL_REDEEM_TIMES = 18;
-
-    // 1 month
-    uint256 public redeemWaitTime = 60 * 60 * 24 * 30;
 
     event ProcessedDividendTracker(
         uint256 iterations,
@@ -59,64 +44,29 @@ contract SkpVault is ERC20, Ownable {
         uint redeemTime
     );
 
-    constructor(address _SPKAddress) ERC20("SKP-Lock", "SKP-Lock") {
+    constructor(address _SPKAddress) ERC20("SKP-Locker", "SKP-Locker") {
         SKPAddress = _SPKAddress;
         dividendTracker = new SHIBDividendTracker();
     }
 
-    function changeCanRedeem(bool st) public onlyOwner {
-        canRedeem = st;
+    function Stake(uint256 amount) external {
+        IERC20(SKPAddress).transferFrom(msg.sender, address(this), amount);
+        safeMint(msg.sender, amount);
+        return;
     }
 
-    // redeem skp token
-    function redeemSKP() public {
-        address addr = msg.sender;
+    function Redeem() public returns(uint) {
+        uint bal = balanceOf(msg.sender);
+        safeBurn(msg.sender, bal);
+        IERC20(SKPAddress).transfer(msg.sender, bal);
 
-        uint bal = balanceOf(addr);
-        uint times = redeemTimes[addr];
-
-        uint initBalance = initSKPBalance[addr];
-        uint redeemNumber;
-
-        require(bal > 0 && times < 18, "error: not token to redeem"); 
-
-        uint redeemDate = nextRedeemDate[addr];
-        require(block.timestamp >= redeemDate, "ERROR: Need Wait Time");
-
-
-        if(times == 0) {
-            require(canRedeem, "ERROR: Redeem ERROR");
-            require(bal == initBalance, "ERROR: Number ERROR");
-            redeemNumber = bal.mul(15).div(100);
-            initSKPBalance[addr] -= redeemNumber;
-        } else if(times == 17) {
-            // all 18 month
-            // last month redeem all
-            redeemNumber = bal;
-        } else {
-            redeemNumber = initBalance.mul(1).div(17);
-        }
-
-        require(redeemNumber <= bal, "error: insufficient SKP amount");
-
-        IERC20(SKPAddress).transfer(addr, redeemNumber);
-
-        redeemTimes[addr] += 1;
-        nextRedeemDate[addr] = block.timestamp + redeemWaitTime;
-
-        safeBurn(addr, redeemNumber);
-
-        emit RedeemInfo(addr, times, redeemNumber, block.timestamp);
-    }
-
-    function changeRedeemWaitTime(uint newTime) public onlyOwner {
-        redeemWaitTime = newTime;
+        return bal;
     }
 
     // ["0xd7336779179354A5E228586898d31c058795238c", "0xbec9536B52d7977AD2bE0842Db0F74a79c40F010"]
     // [1000, 1000]
     // default 9{0}
-    function batchSafeMint(address[] memory addrs, uint[] memory amounts) public onlyOwner {
+    function batchSafeMint(address[] memory addrs, uint[] memory amounts) internal {
         uint len = addrs.length;
         uint i;
         for(i; i < len; i ++) {
@@ -125,15 +75,8 @@ contract SkpVault is ERC20, Ownable {
     }
 
     // amount multi 9{0}
-    function safeMint(address _account, uint256 _amount) public onlyOwner {
-        _amount = _amount * (10 ** 9);
-
-        uint skpBalance = IERC20(SKPAddress).balanceOf(address(this));
-        
-        require(totalSupply().add(_amount) <= skpBalance, "ERROR: MINT exceed!");
-
+    function safeMint(address _account, uint256 _amount) internal {
         _mint(_account, _amount);
-        initSKPBalance[_account] += _amount;
         dividendTracker.setBalance(_account, balanceOf(_account));
     }
 
@@ -160,8 +103,6 @@ contract SkpVault is ERC20, Ownable {
         uint256 shibBalance = IERC20(SHIB).balanceOf(address(this));
 
         // add locked
-        require(canRedeem, "ERROR: claim ERROR");
-
         if(shibBalance >= ShiBDistributeAmount) {
             bool success = IERC20(SHIB).transfer(address(dividendTracker), shibBalance);
             if (success) {
